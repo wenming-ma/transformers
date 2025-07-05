@@ -191,7 +191,8 @@ class PagedAttentionCache(Cache):
 
         self.block_size = block_size
         self.num_blocks = num_blocks
-        self.cache_shape = (self.num_key_value_heads, self.num_blocks, self.block_size, self.head_dim)
+        # self.cache_shape = (self.num_key_value_heads, self.num_blocks, self.block_size, self.head_dim)
+        self.cache_shape = (self.num_blocks, self.block_size, self.num_key_value_heads, self.head_dim)
 
         self.dtype = dtype
         self.device = device
@@ -298,22 +299,18 @@ class PagedAttentionCache(Cache):
         **kwargs,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         total_slots = self.num_blocks * self.block_size
-        x = 16  # ?
         if kernel:
             self.reshape_and_cache_tensors(
                 key_states,
                 value_states,
                 self.key_cache[layer_idx],
                 self.value_cache[layer_idx],
-                self.block_size,
-                x,
-                layer_idx,
                 write_index=write_index,
                 reshaping_function=reshaping_function,
             )
-            k_cache_flat = self.key_cache[layer_idx].view(self.num_key_value_heads, total_slots, self.head_dim)
-            v_cache_flat = self.value_cache[layer_idx].view(self.num_key_value_heads, total_slots, self.head_dim)
-            return k_cache_flat[:, read_index, :], v_cache_flat[:, read_index, :]
+            k_cache_flat = self.key_cache[layer_idx].view(total_slots, self.num_key_value_heads, self.head_dim)
+            v_cache_flat = self.value_cache[layer_idx].view(total_slots, self.num_key_value_heads, self.head_dim)
+            return k_cache_flat[read_index, :, :], v_cache_flat[read_index, :, :]
         else:
             k_cache_flat = self.key_cache[layer_idx].view(self.num_key_value_heads, total_slots, self.head_dim)
             v_cache_flat = self.value_cache[layer_idx].view(self.num_key_value_heads, total_slots, self.head_dim)
@@ -327,9 +324,6 @@ class PagedAttentionCache(Cache):
         value: torch.Tensor,
         key_cache: torch.Tensor,
         value_cache: torch.Tensor,
-        block_size: int,
-        x: int,
-        layer_idx: int,
         write_index: torch.Tensor,
         reshaping_function,
         **kwargs,
@@ -337,20 +331,11 @@ class PagedAttentionCache(Cache):
         """
         Reshape and cache key/value tensors following the same logic as the Metal kernel.
         """
-        # key_cache = key_cache.view(
-        #     self.num_key_value_heads, self.num_blocks, self.block_size, self.head_dim // x, x
-        # ).permute(1, 0, 3, 2, 4)
-        # value_cache = value_cache.view(
-        #     self.num_key_value_heads, self.num_blocks, self.block_size, self.head_dim
-        # ).permute(1, 0, 3, 2)
-
-        # Create slot mapping (which tokens go to which cache slots)
-        # Convert write_index to int64 as expected by Metal kernel
         slot_mapping = write_index.to(torch.int64)
-
         batch_size, num_heads, seq_len, head_size = key.shape
         key = key.transpose(1, 2).view(batch_size * seq_len, num_heads, head_size)
         value = value.transpose(1, 2).view(batch_size * seq_len, num_heads, head_size)
+        # expects [num_blocks, block_size, num_heads, head_size]
         reshaping_function(
             key,
             value,
@@ -362,20 +347,7 @@ class PagedAttentionCache(Cache):
             torch.tensor(1.0, device="mps"),  # v_scale
         )
 
-        return key_cache, value_cache
-
-        reshaping_function(
-            key,
-            value,
-            key_cache,
-            value_cache,
-            slot_mapping,
-            "auto",  # kv_cache_dtype
-            torch.tensor(1.0, device="mps"),  # k_scale
-            torch.tensor(1.0, device="mps"),  # v_scale
-        )
-
-        return key_cache, value_cache
+        # return key_cache.permute(2, 0, 1, 3), value_cache.permute(2, 0, 1, 3)
 
 
 class Scheduler(ABC):
@@ -866,7 +838,7 @@ class ContinuousBatchProcessor:
         self.max_seqlen_k = 0
         self.output_ids = torch.full((1, T), -1, **tensor_metadata).to(self.model_device, non_blocking=True)
         self.block_tables = torch.full(
-            (T, 100),
+            (T, 8),
             fill_value=-1,
             dtype=torch.int32,
         ).to(self.model_device, non_blocking=True)
@@ -886,7 +858,7 @@ class ContinuousBatchProcessor:
         self.max_seqlen_q = 0
         self.max_seqlen_k = 0
         self.output_ids.zero_()
-        self.block_tables.zero_()
+        self.block_tables.fill_(-1)
 
     def get_model_kwargs(self) -> PagedAttentionArgs:
         """Get model keyword arguments for the current batch."""
@@ -1014,7 +986,7 @@ class ContinuousBatchProcessor:
             state.position_offset += query_length
 
             block_list = self.cache.get_block_table(state.request_id)
-            self.block_tables[len(cumulative_seqlens_q), : len(block_list)] = torch.tensor(
+            self.block_tables[len(cumulative_seqlens_q) - 2, : len(block_list)] = torch.tensor(
                 block_list, dtype=torch.int32, device=self.model_device
             )
 
@@ -1053,7 +1025,10 @@ class ContinuousBatchProcessor:
         self.cumulative_seqlens_k[: len(cumulative_seqlens_k)] = to_tensor(cumulative_seqlens_k)
         self.logits_indices[: len(logits_indices)] = to_tensor(logits_indices)
         min_value = torch.finfo(self.model_dtype).min
-        if self.config._attn_implementation != "paged_attention":  # we set `is_causal` to True in paged call`
+        if (
+            self.config._attn_implementation != "paged_attention" and self.max_seqlen_q != 1
+        ):  # we set `is_causal` to True in paged call`
+            # when decoding with sdpa paged, no need for a mask
             for i in range(len(cumulative_seqlens_q) - 1):
                 if (
                     cumulative_seqlens_q[i + 1] - cumulative_seqlens_q[i]
