@@ -295,7 +295,7 @@ class PagedAttentionCache(Cache):
         read_index,
         write_index,
         reshaping_function,
-        kernel=False,
+        kernel=True,
         **kwargs,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         total_slots = self.num_blocks * self.block_size
