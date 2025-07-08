@@ -1157,7 +1157,7 @@ class ContinuousBatchingManager:
         self.do_sample = getattr(generation_config, "do_sample", True)
         self.logit_processor = self.model._get_logits_processor(self.model.generation_config)
         self.use_cuda_graph = getattr(generation_config, "use_cuda_graph", True)
-        self.profile = getattr(generation_config, "profile", False)
+        self.profile = getattr(generation_config, "profile", True)
         self.manual_eviction = manual_eviction
         self.batch_processor: Optional[ContinuousBatchProcessor] = None
         self.decode_stream = DecodeStream(skip_special_tokens=True)
@@ -1358,7 +1358,7 @@ class ContinuousBatchingManager:
             if self.profile:
                 tracing_schedule = schedule(skip_first=2, warmup=3, active=200, repeat=100, wait=1)
                 trace_handler = tensorboard_trace_handler(
-                    dir_name="/fsx/arthur/transformers", use_gzip=True, worker_name="paged_compile"
+                    dir_name="/fsx/mohamed", use_gzip=True, worker_name="paged_compile"
                 )
                 activities = [
                     torch.profiler.ProfilerActivity.CPU,
