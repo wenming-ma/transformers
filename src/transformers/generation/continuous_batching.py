@@ -1156,7 +1156,7 @@ class ContinuousBatchingManager:
         self.model.generation_config.top_p = None
         self.do_sample = getattr(generation_config, "do_sample", True)
         self.logit_processor = self.model._get_logits_processor(self.model.generation_config)
-        self.use_cuda_graph = getattr(generation_config, "use_cuda_graph", True)
+        self.use_cuda_graph = getattr(generation_config, "use_cuda_graph", False)
         self.profile = getattr(generation_config, "profile", True)
         self.manual_eviction = manual_eviction
         self.batch_processor: Optional[ContinuousBatchProcessor] = None
