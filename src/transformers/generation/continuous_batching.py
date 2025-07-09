@@ -295,7 +295,7 @@ class PagedAttentionCache(Cache):
         read_index,
         write_index,
         reshaping_function,
-        kernel=False,
+        kernel=True,
         **kwargs,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         total_slots = self.num_blocks * self.block_size
@@ -826,7 +826,7 @@ class ContinuousBatchProcessor:
         self.max_seqlen_k = 0
         self.output_ids = torch.full((1, T), -1, **tensor_metadata).to(self.model_device, non_blocking=True)
         self.block_tables = torch.full(
-            (T, 20),
+            (T, 100),
             fill_value=-1,
             dtype=torch.int32,
         ).to(self.model_device, non_blocking=True)
@@ -1157,7 +1157,7 @@ class ContinuousBatchingManager:
         self.do_sample = getattr(generation_config, "do_sample", True)
         self.logit_processor = self.model._get_logits_processor(self.model.generation_config)
         self.use_cuda_graph = getattr(generation_config, "use_cuda_graph", False)
-        self.profile = getattr(generation_config, "profile", True)
+        self.profile = getattr(generation_config, "profile", False)
         self.manual_eviction = manual_eviction
         self.batch_processor: Optional[ContinuousBatchProcessor] = None
         self.decode_stream = DecodeStream(skip_special_tokens=True)
