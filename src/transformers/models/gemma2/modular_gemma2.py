@@ -39,7 +39,6 @@ from ..gemma.modeling_gemma import (
     GemmaModel,
     GemmaRMSNorm,
     apply_rotary_pos_emb,
-    repeat_kv,
 )
 
 

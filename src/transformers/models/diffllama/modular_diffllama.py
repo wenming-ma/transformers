@@ -33,7 +33,6 @@ from ..llama.modeling_llama import (
     LlamaModel,
     LlamaPreTrainedModel,
     apply_rotary_pos_emb,
-    repeat_kv,
 )
 from ..mistral.modeling_mistral import MistralMLP
 from .configuration_diffllama import DiffLlamaConfig
